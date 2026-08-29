@@ -38,4 +38,4 @@ Com as dependências instaladas, basta executar o arquivo principal da interface
 ```bash
 python gui.py
 ```
-Uma janela do Tkinter se abrirá exibindo o painel principal. Clique em Atualizar Dashboard para gerar os dados simulados, treinar o modelo e visualizar os gráficos e o relatório de falhas. E caso deseje, clique em Exportar Relatório para gerar o PDF de manutenção.
+Uma janela do CustomTkinter se abrirá exibindo o painel principal. Clique em Atualizar Dashboard para gerar os dados simulados, treinar o modelo e visualizar os gráficos e o relatório de falhas. E caso deseje, clique em Exportar Relatório para gerar o PDF de manutenção.
