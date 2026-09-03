@@ -3,6 +3,7 @@ import customtkinter as ctk
 import tkinter.messagebox as messagebox
 from tkinter import filedialog
 import os
+import sys
 import sqlite3
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
@@ -68,15 +69,14 @@ class PredictiveGuardApp(ctk.CTk):
     def carregar_historico_inicial(self):
         """Carrega os últimos 60 registros do banco para que a tela não inicie vazia."""
         try:
-            query = "SELECT timestamp, temperatura, vibracao, carga, falha_detectada FROM leituras ORDER BY id DESC LIMIT 60"
+            # CORREÇÃO: Coluna 'id' adicionada no SELECT
+            query = "SELECT id, timestamp, temperatura, vibracao, carga, falha_detectada FROM leituras ORDER BY id DESC LIMIT 60"
             df_hist = pd.read_sql_query(query, self.conn)
             
             if not df_hist.empty:
                 df_hist = df_hist.sort_values(by="id").reset_index(drop=True)
-                # Renomeia para o padrão da interface
                 df_hist.rename(columns={'temperatura': 'Temperature', 'vibracao': 'Vibration', 'carga': 'Load', 'falha_detectada': 'Failure'}, inplace=True)
                 
-                # Reatribui o tempo sequencial para visualização
                 df_hist['Time'] = range(len(df_hist))
                 self.dados_live = df_hist[['Time', 'Temperature', 'Vibration', 'Load', 'Failure']]
                 self.tempo_atual = len(self.dados_live)
@@ -90,13 +90,17 @@ class PredictiveGuardApp(ctk.CTk):
             self.atualizar_graficos_vazios()
 
     def inicializar_modelo_ia(self):
-        # Simulação calibrada para comportamento industrial realista
         temp = np.random.normal(65, 4, 2000)
         vib = np.random.normal(25, 6, 2000)
         load = np.random.uniform(40, 85, 2000)
         amb_temp = np.random.uniform(22, 35, 2000)
         hum = np.random.uniform(40, 70, 2000)
         age = np.random.uniform(1, 5, 2000)
+
+        # CORREÇÃO: Injetando anomalias de propósito para a IA conhecer a classe 1 (Falha)
+        temp[:15] = 95.0
+        vib[15:30] = 60.0
+        load[30:45] = 98.0
 
         falhas = np.where((temp > self.limites["temp_max"]) | (vib > self.limites["vib_max"]) | (load > self.limites["load_max"]), 1, 0)
         
@@ -205,7 +209,6 @@ class PredictiveGuardApp(ctk.CTk):
         if not self.is_streaming:
             return
 
-        # 1. Geração de dados industriais calibrados com oscilações reais
         temp = np.random.normal(68, 3.5)
         vib = np.random.normal(26, 5)
         load = np.random.uniform(45, 88)
@@ -213,19 +216,16 @@ class PredictiveGuardApp(ctk.CTk):
         hum = np.random.uniform(40, 65)
         age = np.random.uniform(2, 6)
 
-        # 2. Avaliação de Falha com base estrita nos LIMITES CONFIGURADOS PELO USUÁRIO
         falha = 1 if (temp > self.limites["temp_max"]) or (vib > self.limites["vib_max"]) or (load > self.limites["load_max"]) else 0
 
         features = pd.DataFrame({'Temp': [temp], 'Vib': [vib], 'Load': [load], 'AmbTemp': [amb_temp], 'Hum': [hum], 'Age': [age]})
         prob_instantanea = self.modelo.predict_proba(features)[0][1] * 100 
 
-        # Suavização da probabilidade (Média Móvel dos últimos 5 segundos)
         self.historico_risco.append(prob_instantanea)
         if len(self.historico_risco) > 5:
             self.historico_risco.pop(0)
         probabilidade_suavizada = sum(self.historico_risco) / len(self.historico_risco)
 
-        # 3. Salvar no banco de dados SQLite
         agora = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         self.cursor.execute('''
             INSERT INTO leituras (timestamp, temperatura, vibracao, carga, risco_falha, falha_detectada)
@@ -233,7 +233,6 @@ class PredictiveGuardApp(ctk.CTk):
         ''', (agora, temp, vib, load, probabilidade_suavizada, int(falha)))
         self.conn.commit()
 
-        # 4. Adiciona ao DataFrame live da interface
         novo_dado = pd.DataFrame({'Time': [self.tempo_atual], 'Temperature': [temp], 'Vibration': [vib], 'Load': [load], 'Failure': [falha]})
         self.dados_live = pd.concat([self.dados_live, novo_dado], ignore_index=True)
 
@@ -242,11 +241,9 @@ class PredictiveGuardApp(ctk.CTk):
 
         self.tempo_atual += 1
 
-        # 5. Atualiza a Tela
         self.atualizar_graficos_live()
         self.atualizar_textos_live(temp, vib, load, falha, probabilidade_suavizada)
 
-        # Continua o loop de segundo em segundo de forma segura
         if self.is_streaming:
             self.after(1000, self.loop_streaming)
 
@@ -259,7 +256,6 @@ class PredictiveGuardApp(ctk.CTk):
             ax.grid(color='#333333', linestyle='-', linewidth=0.5)
             for spine in ax.spines.values(): spine.set_color('#333333')
         
-        # Legendas Dinâmicas baseadas nos limites atuais
         self.fig.add_subplot(3, 1, 1).set_title(f"Temperatura Operacional (°C) - Limite: {self.limites['temp_max']}°C", color='white', pad=5)
         self.fig.add_subplot(3, 1, 2).set_title(f"Níveis de Vibração - Limite: {self.limites['vib_max']}", color='white', pad=5)
         self.fig.add_subplot(3, 1, 3).set_title(f"Carga da Máquina (%) - Limite: {self.limites['load_max']}%", color='white', pad=5)
@@ -282,28 +278,22 @@ class PredictiveGuardApp(ctk.CTk):
                 ax.set_xlim(max(0, self.dados_live['Time'].max() - self.janela_visualizacao), max(self.janela_visualizacao, self.dados_live['Time'].max()))
 
         if not self.dados_live.empty:
-            # Plot Temperatura
             ax1.plot(self.dados_live['Time'], self.dados_live['Temperature'], color='#ff4a4a', linewidth=1.5)
             falhas_temp = self.dados_live[self.dados_live['Failure'] == 1]
             if not falhas_temp.empty:
                 ax1.scatter(falhas_temp['Time'], falhas_temp['Temperature'], color='white', marker='x')
-            
-            # Linha de Limite Crítico no Gráfico
             ax1.axhline(y=self.limites['temp_max'], color='#ff4a4a', linestyle='--', linewidth=1, alpha=0.7, label='Limite Configurado')
 
-            # Plot Vibração
             ax2.plot(self.dados_live['Time'], self.dados_live['Vibration'], color='#4a90e2', linewidth=1.5)
             if not falhas_temp.empty:
                 ax2.scatter(falhas_temp['Time'], falhas_temp['Vibration'], color='orange', marker='x')
             ax2.axhline(y=self.limites['vib_max'], color='#4a90e2', linestyle='--', linewidth=1, alpha=0.7)
 
-            # Plot Carga
             ax3.plot(self.dados_live['Time'], self.dados_live['Load'], color='#50e3c2', linewidth=1.5)
             if not falhas_temp.empty:
                 ax3.scatter(falhas_temp['Time'], falhas_temp['Load'], color='white', marker='x')
             ax3.axhline(y=self.limites['load_max'], color='#50e3c2', linestyle='--', linewidth=1, alpha=0.7)
 
-        # Legendas refeltindo perfeitamente os limites atuais configurados
         ax1.set_title(f"Temperatura Operacional (°C) | Teto Max: {self.limites['temp_max']}°C", color='white', pad=5)
         ax2.set_title(f"Níveis de Vibração | Teto Max: {self.limites['vib_max']}", color='white', pad=5)
         ax3.set_title(f"Carga da Máquina (%) | Teto Max: {self.limites['load_max']}%", color='white', pad=5)
@@ -323,7 +313,6 @@ class PredictiveGuardApp(ctk.CTk):
         stats += f"Anomalias na Janela: {falhas_janela}\n"
         stats += f"Fator Crítico IA: {self.top_feature} ({self.top_importance:.1f}%)"
 
-        # Retenção de Alarme (Latching)
         if prob_falha > 70 or falha == 1: self.timer_alertas["risco"] = 5
         if temp > self.limites["temp_max"]: self.timer_alertas["temp"] = 5
         if vib > self.limites["vib_max"]: self.timer_alertas["vib"] = 5
@@ -431,7 +420,7 @@ class PredictiveGuardApp(ctk.CTk):
             messagebox.showerror("Erro", f"Erro ao exportar relatório: {str(e)}")
 
     def fechar_aplicacao(self):
-        """Para a thread de streaming e fecha a conexão com o banco de forma segura."""
+        # CORREÇÃO: Força o encerramento do script e libera o terminal
         self.is_streaming = False
         if hasattr(self, 'conn') and self.conn:
             try:
@@ -440,6 +429,7 @@ class PredictiveGuardApp(ctk.CTk):
             except Exception:
                 pass
         self.destroy()
+        sys.exit(0)
 
 if __name__ == "__main__":
     app = PredictiveGuardApp()
